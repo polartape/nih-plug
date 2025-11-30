@@ -375,7 +375,8 @@ impl<P: Vst3Plugin> IPlugView for WrapperView<P> {
     ) -> tresult {
         let editor_guard = self.editor.lock();
 
-        // Check if editor wants keyboard input
+        // Only intercept keyboard events when editor explicitly wants them
+        // (e.g., when a TextEdit widget is focused)
         if editor_guard.wants_keyboard_input() {
             let event = KeyEvent {
                 event_type: KeyEventType::KeyDown,
@@ -385,13 +386,16 @@ impl<P: Vst3Plugin> IPlugView for WrapperView<P> {
             };
 
             if editor_guard.on_key_event(event) {
-                // Editor handled the event
+                // Editor consumed the event - tell host we handled it
                 return kResultOk;
             }
         }
 
-        // Editor did not handle - host can use it (e.g., for shortcuts)
-        kResultFalse
+        // CRITICAL: Return kNotImplemented (NOT kResultFalse!)
+        // This tells the host to use OS-level input mechanisms,
+        // which is how baseview/egui receives mouse and keyboard events.
+        // Using kResultFalse here breaks all GUI input.
+        kNotImplemented
     }
 
     unsafe fn on_key_up(
@@ -415,7 +419,8 @@ impl<P: Vst3Plugin> IPlugView for WrapperView<P> {
             }
         }
 
-        kResultFalse
+        // CRITICAL: Return kNotImplemented to preserve OS-level input
+        kNotImplemented
     }
 
     unsafe fn get_size(&self, size: *mut ViewRect) -> tresult {
