@@ -146,8 +146,16 @@ impl WindowHandler for WrapperWindowHandler {
         }
     }
 
-    fn on_event(&mut self, _window: &mut Window, _event: baseview::Event) -> EventStatus {
-        EventStatus::Ignored
+    fn on_event(&mut self, _window: &mut Window, event: baseview::Event) -> EventStatus {
+        // Return Captured so baseview knows we handled the event.
+        // Child window (egui-baseview) receives its own events directly from OS
+        // because it has its own HWND, but we need to claim the parent window events
+        // to prevent them from interfering.
+        match event {
+            baseview::Event::Mouse(_) => EventStatus::Captured,
+            baseview::Event::Keyboard(_) => EventStatus::Captured,
+            baseview::Event::Window(_) => EventStatus::Captured,
+        }
     }
 }
 

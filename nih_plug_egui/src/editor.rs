@@ -199,9 +199,13 @@ where
     }
 
     fn wants_keyboard_input(&self) -> bool {
-        self.keyboard_state
-            .wants_input
-            .load(Ordering::Relaxed)
+        // Always return true to ensure keyboard events are captured.
+        // This prevents timing issues where TextEdit gets focus but
+        // wants_input hasn't been updated yet.
+        //
+        // Downside: DAW keyboard shortcuts won't work while plugin window is focused.
+        // This is acceptable for this plugin since it doesn't need DAW shortcuts.
+        true
     }
 
     fn on_key_event(&self, event: KeyEvent) -> bool {
