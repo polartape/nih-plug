@@ -7,6 +7,35 @@ use std::sync::Arc;
 
 use crate::prelude::GuiContext;
 
+/// Keyboard event type (key down or key up)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KeyEventType {
+    KeyDown,
+    KeyUp,
+}
+
+/// Modifier key state
+#[derive(Debug, Clone, Copy, Default)]
+pub struct KeyModifiers {
+    pub shift: bool,
+    pub ctrl: bool,
+    pub alt: bool,
+    /// Cmd on macOS, Win on Windows
+    pub meta: bool,
+}
+
+/// A keyboard event from the VST3 host
+#[derive(Debug, Clone)]
+pub struct KeyEvent {
+    pub event_type: KeyEventType,
+    /// Unicode character (if applicable)
+    pub character: Option<char>,
+    /// VST3 key code (platform-specific virtual key code)
+    pub key_code: i16,
+    /// Modifier keys state
+    pub modifiers: KeyModifiers,
+}
+
 /// An editor for a [`Plugin`][crate::prelude::Plugin].
 pub trait Editor: Send {
     /// Create an instance of the plugin's editor and embed it in the parent window. As explained in
@@ -68,6 +97,26 @@ pub trait Editor: Send {
     /// when multiple parameter values hcange at the same time. For example, when a preset is
     /// loaded.
     fn param_values_changed(&self);
+
+    /// Check if the editor currently wants keyboard input (e.g., a text field is focused).
+    /// Returns true if keyboard events should be forwarded to the editor.
+    ///
+    /// The default implementation returns false (no keyboard input wanted).
+    /// This is an opt-in feature for editors that need text input support.
+    fn wants_keyboard_input(&self) -> bool {
+        false
+    }
+
+    /// Handle a keyboard event from the host.
+    /// Returns true if the event was consumed by the editor.
+    ///
+    /// The default implementation returns false (event not handled).
+    /// Override this to receive keyboard events when [`wants_keyboard_input()`][Self::wants_keyboard_input()]
+    /// returns true.
+    fn on_key_event(&self, event: KeyEvent) -> bool {
+        let _ = event;
+        false
+    }
 
     // TODO: Reconsider adding a tick function here for the Linux `IRunLoop`. To keep this platform
     //       and API agnostic, add a way to ask the GuiContext if the wrapper already provides a

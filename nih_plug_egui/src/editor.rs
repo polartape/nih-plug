@@ -2,13 +2,15 @@
 
 use crate::egui::Vec2;
 use crate::egui::ViewportCommand;
-use crate::EguiState;
+use crate::keyboard::convert_to_egui_events;
+use crate::{EguiState, KeyboardState};
 use baseview::gl::GlConfig;
 use baseview::PhySize;
 use baseview::{Size, WindowHandle, WindowOpenOptions, WindowScalePolicy};
 use crossbeam::atomic::AtomicCell;
 use egui_baseview::egui::Context;
 use egui_baseview::EguiWindow;
+use nih_plug::editor::KeyEvent;
 use nih_plug::prelude::{Editor, GuiContext, ParamSetter, ParentWindowHandle};
 use parking_lot::RwLock;
 use raw_window_handle::{HasRawWindowHandle, RawWindowHandle};
@@ -29,6 +31,9 @@ pub(crate) struct EguiEditor<T> {
     /// The scaling factor reported by the host, if any. On macOS this will never be set and we
     /// should use the system scaling factor instead.
     pub(crate) scaling_factor: AtomicCell<Option<f32>>,
+
+    /// Shared keyboard state for VST3 keyboard event forwarding.
+    pub(crate) keyboard_state: Arc<KeyboardState>,
 }
 
 /// This version of `baseview` uses a different version of `raw_window_handle than NIH-plug, so we
@@ -70,6 +75,7 @@ where
         let update = self.update.clone();
         let state = self.user_state.clone();
         let egui_state = self.egui_state.clone();
+        let keyboard_state = self.keyboard_state.clone();
 
         let (unscaled_width, unscaled_height) = self.egui_state.size();
         let scaling_factor = self.scaling_factor.load();
@@ -106,6 +112,24 @@ where
             move |egui_ctx, _queue, state| build(egui_ctx, &mut state.write()),
             move |egui_ctx, queue, state| {
                 let setter = ParamSetter::new(context.as_ref());
+
+                // Update whether egui wants keyboard input (for VST3 keyboard forwarding)
+                let wants_input = egui_ctx.wants_keyboard_input();
+                keyboard_state
+                    .wants_input
+                    .store(wants_input, Ordering::Relaxed);
+
+                // Inject pending keyboard events from VST3 host
+                if let Some(mut pending) = keyboard_state.pending_events.try_lock() {
+                    while let Some(key_event) = pending.pop_front() {
+                        let egui_events = convert_to_egui_events(&key_event);
+                        egui_ctx.input_mut(|input| {
+                            for event in egui_events {
+                                input.events.push(event);
+                            }
+                        });
+                    }
+                }
 
                 // If the window was requested to resize
                 if let Some(new_size) = egui_state.requested_size.swap(None) {
@@ -172,6 +196,21 @@ where
 
     fn param_values_changed(&self) {
         // Same
+    }
+
+    fn wants_keyboard_input(&self) -> bool {
+        self.keyboard_state
+            .wants_input
+            .load(Ordering::Relaxed)
+    }
+
+    fn on_key_event(&self, event: KeyEvent) -> bool {
+        // Add event to pending queue
+        if let Some(mut pending) = self.keyboard_state.pending_events.try_lock() {
+            pending.push_back(event);
+            return true; // Accepted for processing
+        }
+        false
     }
 }
 

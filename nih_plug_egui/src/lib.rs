@@ -7,10 +7,12 @@
 
 use crossbeam::atomic::AtomicCell;
 use egui::Context;
+use nih_plug::editor::KeyEvent;
 use nih_plug::params::persist::PersistentField;
 use nih_plug::prelude::{Editor, ParamSetter};
-use parking_lot::RwLock;
+use parking_lot::{Mutex, RwLock};
 use serde::{Deserialize, Serialize};
+use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
@@ -21,8 +23,27 @@ compile_error!("There's currently no software rendering support for egui");
 pub use egui_baseview::egui;
 
 mod editor;
+mod keyboard;
 pub mod resizable_window;
 pub mod widgets;
+
+/// Shared keyboard state between VST3 wrapper and egui editor.
+/// Used to pass keyboard events from the host to egui.
+pub(crate) struct KeyboardState {
+    /// Pending keyboard events from the host
+    pending_events: Mutex<VecDeque<KeyEvent>>,
+    /// Whether egui wants keyboard input (updated each frame)
+    wants_input: AtomicBool,
+}
+
+impl Default for KeyboardState {
+    fn default() -> Self {
+        Self {
+            pending_events: Mutex::new(VecDeque::new()),
+            wants_input: AtomicBool::new(false),
+        }
+    }
+}
 
 /// Create an [`Editor`] instance using an [`egui`][::egui] GUI. Using the user state parameter is
 /// optional, but it can be useful for keeping track of some temporary GUI-only settings. See the
@@ -58,6 +79,8 @@ where
         scaling_factor: AtomicCell::new(None),
         #[cfg(not(target_os = "macos"))]
         scaling_factor: AtomicCell::new(Some(1.0)),
+
+        keyboard_state: Arc::new(KeyboardState::default()),
     }))
 }
 

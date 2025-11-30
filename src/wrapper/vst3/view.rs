@@ -12,6 +12,7 @@ use vst3_sys::VST3;
 
 use super::inner::{Task, WrapperInner};
 use super::util::{ObjectPtr, VstPtr};
+use crate::editor::{KeyEvent, KeyEventType, KeyModifiers};
 use crate::plugin::vst3::Vst3Plugin;
 use crate::prelude::{Editor, ParentWindowHandle};
 
@@ -244,6 +245,36 @@ impl<P: Vst3Plugin> RunLoopEventHandler<P> {
     }
 }
 
+/// Convert a VST3 char16 (UTF-16 code unit) to a Rust char
+fn vst3_keycode_to_char(key: vst3_sys::base::char16) -> Option<char> {
+    char::from_u32(key as u32)
+}
+
+/// Convert VST3 modifier flags to KeyModifiers
+/// See https://github.com/steinbergmedia/vst3_pluginterfaces/blob/master/base/keycodes.h
+fn vst3_modifiers_to_key_modifiers(modifiers: i16) -> KeyModifiers {
+    // VST3 modifier flags (from VST3 SDK keycodes.h)
+    const K_SHIFT_KEY: i16 = 1 << 0; // Shift
+    const K_ALTERNATE_KEY: i16 = 1 << 1; // Alt
+    const K_COMMAND_KEY: i16 = 1 << 2; // Windows: Ctrl, macOS: Cmd
+    const K_CONTROL_KEY: i16 = 1 << 3; // Windows: Win, macOS: Ctrl
+
+    KeyModifiers {
+        shift: (modifiers & K_SHIFT_KEY) != 0,
+        alt: (modifiers & K_ALTERNATE_KEY) != 0,
+        // ctrl = Ctrl on Windows/Linux, Ctrl on macOS
+        #[cfg(target_os = "macos")]
+        ctrl: (modifiers & K_CONTROL_KEY) != 0,
+        #[cfg(not(target_os = "macos"))]
+        ctrl: (modifiers & K_COMMAND_KEY) != 0,
+        // meta = Win on Windows, Cmd on macOS
+        #[cfg(target_os = "macos")]
+        meta: (modifiers & K_COMMAND_KEY) != 0,
+        #[cfg(not(target_os = "macos"))]
+        meta: (modifiers & K_CONTROL_KEY) != 0,
+    }
+}
+
 impl<P: Vst3Plugin> IPlugView for WrapperView<P> {
     #[cfg(all(target_family = "unix", not(target_os = "macos")))]
     unsafe fn is_platform_type_supported(&self, type_: vst3_sys::base::FIDString) -> tresult {
@@ -338,20 +369,53 @@ impl<P: Vst3Plugin> IPlugView for WrapperView<P> {
 
     unsafe fn on_key_down(
         &self,
-        _key: vst3_sys::base::char16,
-        _key_code: i16,
-        _modifiers: i16,
+        key: vst3_sys::base::char16,
+        key_code: i16,
+        modifiers: i16,
     ) -> tresult {
-        kNotImplemented
+        let editor_guard = self.editor.lock();
+
+        // Check if editor wants keyboard input
+        if editor_guard.wants_keyboard_input() {
+            let event = KeyEvent {
+                event_type: KeyEventType::KeyDown,
+                character: vst3_keycode_to_char(key),
+                key_code,
+                modifiers: vst3_modifiers_to_key_modifiers(modifiers),
+            };
+
+            if editor_guard.on_key_event(event) {
+                // Editor handled the event
+                return kResultOk;
+            }
+        }
+
+        // Editor did not handle - host can use it (e.g., for shortcuts)
+        kResultFalse
     }
 
     unsafe fn on_key_up(
         &self,
-        _key: vst3_sys::base::char16,
-        _key_code: i16,
-        _modifiers: i16,
+        key: vst3_sys::base::char16,
+        key_code: i16,
+        modifiers: i16,
     ) -> tresult {
-        kNotImplemented
+        let editor_guard = self.editor.lock();
+
+        if editor_guard.wants_keyboard_input() {
+            let event = KeyEvent {
+                event_type: KeyEventType::KeyUp,
+                character: vst3_keycode_to_char(key),
+                key_code,
+                modifiers: vst3_modifiers_to_key_modifiers(modifiers),
+            };
+
+            if editor_guard.on_key_event(event) {
+                return kResultOk;
+            }
+        }
+
+        kResultFalse
     }
 
     unsafe fn get_size(&self, size: *mut ViewRect) -> tresult {
